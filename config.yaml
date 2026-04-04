@@ -1,0 +1,35 @@
+server:
+  port: 8080
+  addr: ":8080"
+  read_timeout: 30s
+  write_timeout: 30s
+  shutdown_timeout: 30s
+
+llm_backend:
+  base_url: "http://python-llm:8000"
+  api_key: ""
+
+agent:
+  max_concurrent_runs: 5
+  max_workers: 10
+  task_timeout: 120s
+  rate_limit_rps: 10.0
+  rate_limit_burst: 20
+  max_memory_messages: 100
+  confidence_thresh: 0.5
+
+log:
+  level: "info"
+  format: "json"
+
+tracing:
+  enabled: true
+  service_name: "go-llm-agent-framework"
+  sample_rate: 1.0
+
+nlp:
+  enabled: true
+  enable_normalize: true
+  enable_stopwords: true
+  max_tokens: 1000
+  confidence_thresh: 0.5

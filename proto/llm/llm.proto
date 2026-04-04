@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package llm;
+option go_package = "github.com/DennisMRitchie/go-llm-agent-framework/proto/llm";
+
+service LLMService {
+  rpc Complete(CompleteRequest) returns (CompleteResponse);
+  rpc ClassifyIntent(ClassifyRequest) returns (ClassifyResponse);
+  rpc ExtractEntities(ExtractRequest) returns (ExtractResponse);
+}
+
+message Message {
+  string role = 1;
+  string content = 2;
+  int64 timestamp = 3;
+}
+
+message CompleteRequest {
+  repeated Message messages = 1;
+  string prompt = 2;
+  repeated Message history = 3;
+  string session_id = 4;
+}
+
+message CompleteResponse {
+  string text = 1;
+  int32 tokens_used = 2;
+}
+
+message ClassifyRequest {
+  string text = 1;
+  repeated string candidate_labels = 2;
+}
+
+message ClassifyResponse {
+  string top_label = 1;
+  float confidence = 2;
+  map<string, float> all_scores = 3;
+}
+
+message Entity {
+  string text = 1;
+  string label = 2;
+  int32 start = 3;
+  int32 end = 4;
+  float confidence = 5;
+}
+
+message ExtractRequest {
+  string text = 1;
+}
+
+message ExtractResponse {
+  repeated Entity entities = 1;
+}

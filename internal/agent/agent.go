@@ -60,11 +60,11 @@ type TaskResult struct {
 
 // ToolCallRecord logs a single tool invocation.
 type ToolCallRecord struct {
-	ToolName  string
-	Params    map[string]string
-	Output    string
-	IsError   bool
-	Duration  time.Duration
+	ToolName string
+	Params   map[string]string
+	Output   string
+	IsError  bool
+	Duration time.Duration
 }
 
 // --- Agent ---
@@ -315,7 +315,7 @@ func buildSystemPrompt(reg *tools.Registry) string {
 	var sb strings.Builder
 	sb.WriteString("You are a helpful AI agent. You have access to the following tools:\n\n")
 	for _, t := range reg.List() {
-		sb.WriteString(fmt.Sprintf("- **%s**: %s\n", t.Name(), t.Description()))
+		fmt.Fprintf(&sb, "- **%s**: %s\n", t.Name(), t.Description())
 	}
 	sb.WriteString(`
 To use a tool, output a JSON block like this:
@@ -364,7 +364,7 @@ func buildToolResultsSummary(records []ToolCallRecord) string {
 		if r.IsError {
 			status = "error"
 		}
-		sb.WriteString(fmt.Sprintf("Tool: %s [%s]\nOutput: %s\n\n", r.ToolName, status, truncate(r.Output, 500)))
+		fmt.Fprintf(&sb, "Tool: %s [%s]\nOutput: %s\n\n", r.ToolName, status, truncate(r.Output, 500))
 	}
 	return sb.String()
 }
