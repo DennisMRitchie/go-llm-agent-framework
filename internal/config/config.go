@@ -1,157 +1,148 @@
+// Package config loads configuration from environment variables with sensible defaults.
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
-
-	"github.com/DennisMRitchie/go-llm-agent-framework/internal/llmclient"
 )
 
-// Config holds all configuration for the application
 type Config struct {
-	Log        LogConfig
-	Tracing    TracingConfig
+	Server     ServerConfig
 	Agent      AgentConfig
 	LLMBackend LLMBackendConfig
 	NLP        NLPConfig
-	Server     ServerConfig
+	Metrics    MetricsConfig
+	Log        LogConfig
 }
 
-// LogConfig holds logging configuration
-type LogConfig struct {
-	Level  string
-	Format string
-}
-
-// TracingConfig holds tracing configuration
-type TracingConfig struct {
-	Enabled     bool
-	ServiceName string
-	SampleRate  float64
-}
-
-// AgentConfig holds agent configuration
-type AgentConfig struct {
-	MaxConcurrentTasks int
-	Timeout            time.Duration
-	MaxMemoryMessages  int
-	RateLimitRPS       float64
-	RateLimitBurst     int
-	MaxWorkers         int
-	TaskTimeout        time.Duration
-	MaxConcurrentRuns  int
-}
-
-// LLMBackendConfig holds LLM backend configuration
-type LLMBackendConfig = llmclient.LLMBackendConfig
-
-// NLPConfig holds NLP configuration
-type NLPConfig struct {
-	Enabled          bool
-	EnableNormalize  bool
-	EnableStopwords  bool
-	MaxTokens        int
-	ConfidenceThresh float64
-}
-
-// ServerConfig holds server configuration
 type ServerConfig struct {
+	Host            string
 	Port            int
-	address         string
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
 	ShutdownTimeout time.Duration
 }
 
-// Addr returns the server address
-func (s ServerConfig) Addr() string {
-	return s.address
+type AgentConfig struct {
+	MaxWorkers        int
+	TaskTimeout       time.Duration
+	MaxMemoryMessages int
+	RateLimitRPS      float64
+	RateLimitBurst    int
+	MaxConcurrentRuns int
 }
 
-// Load loads configuration from environment variables
+type LLMBackendConfig struct {
+	BaseURL    string
+	APIKey     string
+	Timeout    time.Duration
+	MaxRetries int
+	Model      string
+	MaxTokens  int
+}
+
+type NLPConfig struct {
+	MaxTokens        int
+	ConfidenceThresh float64
+	EnableNormalize  bool
+	EnableStopwords  bool
+}
+
+type MetricsConfig struct {
+	Enabled bool
+	Path    string
+}
+
+type LogConfig struct {
+	Level  string
+	Format string
+}
+
 func Load() (*Config, error) {
-	cfg := &Config{
-		Log: LogConfig{
-			Level:  getEnv("LOG_LEVEL", "info"),
-			Format: getEnv("LOG_FORMAT", "json"),
-		},
-		Tracing: TracingConfig{
-			Enabled:     getEnvBool("TRACING_ENABLED", false),
-			ServiceName: getEnv("TRACING_SERVICE_NAME", "go-llm-agent-framework"),
-			SampleRate:  getEnvFloat("TRACING_SAMPLE_RATE", 1.0),
+	return &Config{
+		Server: ServerConfig{
+			Host:            envStr("SERVER_HOST", "0.0.0.0"),
+			Port:            envInt("SERVER_PORT", 8080),
+			ReadTimeout:     envDur("SERVER_READ_TIMEOUT", 30*time.Second),
+			WriteTimeout:    envDur("SERVER_WRITE_TIMEOUT", 30*time.Second),
+			ShutdownTimeout: envDur("SERVER_SHUTDOWN_TIMEOUT", 10*time.Second),
 		},
 		Agent: AgentConfig{
-			MaxConcurrentTasks: getEnvInt("AGENT_MAX_CONCURRENT_TASKS", 10),
-			Timeout:            getEnvDuration("AGENT_TIMEOUT", 5*time.Minute),
-			MaxMemoryMessages:  getEnvInt("AGENT_MAX_MEMORY_MESSAGES", 100),
-			RateLimitRPS:       getEnvFloat("AGENT_RATE_LIMIT_RPS", 10.0),
-			RateLimitBurst:     getEnvInt("AGENT_RATE_LIMIT_BURST", 20),
-			MaxWorkers:         getEnvInt("AGENT_MAX_WORKERS", 5),
-			TaskTimeout:        getEnvDuration("AGENT_TASK_TIMEOUT", 2*time.Minute),
-			MaxConcurrentRuns:  getEnvInt("AGENT_MAX_CONCURRENT_RUNS", 10),
+			MaxWorkers:        envInt("AGENT_MAX_WORKERS", 10),
+			TaskTimeout:       envDur("AGENT_TASK_TIMEOUT", 120*time.Second),
+			MaxMemoryMessages: envInt("AGENT_MAX_MEMORY_MESSAGES", 50),
+			RateLimitRPS:      envFloat("AGENT_RATE_LIMIT_RPS", 10.0),
+			RateLimitBurst:    envInt("AGENT_RATE_LIMIT_BURST", 20),
+			MaxConcurrentRuns: envInt("AGENT_MAX_CONCURRENT_RUNS", 5),
 		},
 		LLMBackend: LLMBackendConfig{
-			BaseURL: getEnv("LLM_BACKEND_BASE_URL", "http://localhost:8000"),
-			APIKey:  getEnv("LLM_BACKEND_API_KEY", ""),
+			BaseURL:    envStr("LLM_BASE_URL", "http://localhost:8000"),
+			APIKey:     envStr("LLM_API_KEY", ""),
+			Timeout:    envDur("LLM_TIMEOUT", 60*time.Second),
+			MaxRetries: envInt("LLM_MAX_RETRIES", 3),
+			Model:      envStr("LLM_MODEL", "gpt-3.5-turbo"),
+			MaxTokens:  envInt("LLM_MAX_TOKENS", 1024),
 		},
 		NLP: NLPConfig{
-			Enabled:          getEnvBool("NLP_ENABLED", true),
-			EnableNormalize:  getEnvBool("NLP_ENABLE_NORMALIZE", true),
-			EnableStopwords:  getEnvBool("NLP_ENABLE_STOPWORDS", true),
-			MaxTokens:        getEnvInt("NLP_MAX_TOKENS", 1000),
-			ConfidenceThresh: getEnvFloat("NLP_CONFIDENCE_THRESH", 0.5),
+			MaxTokens:        envInt("NLP_MAX_TOKENS", 512),
+			ConfidenceThresh: envFloat("NLP_CONFIDENCE_THRESHOLD", 0.6),
+			EnableNormalize:  envBool("NLP_ENABLE_NORMALIZE", true),
+			EnableStopwords:  envBool("NLP_ENABLE_STOPWORDS", true),
 		},
-		Server: ServerConfig{
-			Port:            getEnvInt("SERVER_PORT", 8080),
-			address:         getEnv("SERVER_ADDR", ":8080"),
-			ReadTimeout:     getEnvDuration("SERVER_READ_TIMEOUT", 30*time.Second),
-			WriteTimeout:    getEnvDuration("SERVER_WRITE_TIMEOUT", 30*time.Second),
-			ShutdownTimeout: getEnvDuration("SERVER_SHUTDOWN_TIMEOUT", 30*time.Second),
+		Metrics: MetricsConfig{
+			Enabled: envBool("METRICS_ENABLED", true),
+			Path:    envStr("METRICS_PATH", "/metrics"),
 		},
-	}
-	return cfg, nil
+		Log: LogConfig{
+			Level:  envStr("LOG_LEVEL", "info"),
+			Format: envStr("LOG_FORMAT", "json"),
+		},
+	}, nil
 }
 
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+func (s ServerConfig) Addr() string { return fmt.Sprintf("%s:%d", s.Host, s.Port) }
+
+func envStr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	return defaultValue
+	return def
 }
 
-func getEnvBool(key string, defaultValue bool) bool {
-	if value := os.Getenv(key); value != "" {
-		if b, err := strconv.ParseBool(value); err == nil {
-			return b
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
 		}
 	}
-	return defaultValue
+	return def
 }
 
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if i, err := strconv.Atoi(value); err == nil {
-			return i
-		}
-	}
-	return defaultValue
-}
-
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
-	if value := os.Getenv(key); value != "" {
-		if d, err := time.ParseDuration(value); err == nil {
-			return d
-		}
-	}
-	return defaultValue
-}
-
-func getEnvFloat(key string, defaultValue float64) float64 {
-	if value := os.Getenv(key); value != "" {
-		if f, err := strconv.ParseFloat(value, 64); err == nil {
+func envFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			return f
 		}
 	}
-	return defaultValue
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return def
+}
+
+func envDur(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
 }

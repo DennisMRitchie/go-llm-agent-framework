@@ -1,14 +1,14 @@
-// Package api contains the HTTP handlers for the agent framework REST API.
+// Package api implements the HTTP REST API using only stdlib net/http.
 package api
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
-
-	"github.com/gin-gonic/gin"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.uber.org/zap"
 
 	"github.com/DennisMRitchie/go-llm-agent-framework/internal/agent"
 	"github.com/DennisMRitchie/go-llm-agent-framework/internal/metrics"
@@ -16,7 +16,6 @@ import (
 	"github.com/DennisMRitchie/go-llm-agent-framework/internal/tools"
 )
 
-// Handler holds all API dependencies.
 type Handler struct {
 	orchestrator *agent.Orchestrator
 	toolReg      *tools.Registry
@@ -24,10 +23,9 @@ type Handler struct {
 	classifier   *nlp.Classifier
 	extractor    *nlp.EntityExtractor
 	httpMetrics  *metrics.HTTPMetrics
-	logger       *zap.Logger
+	logger       *slog.Logger
 }
 
-// NewHandler constructs the API handler.
 func NewHandler(
 	orchestrator *agent.Orchestrator,
 	toolReg *tools.Registry,
@@ -35,7 +33,7 @@ func NewHandler(
 	classifier *nlp.Classifier,
 	extractor *nlp.EntityExtractor,
 	httpMetrics *metrics.HTTPMetrics,
-	logger *zap.Logger,
+	logger *slog.Logger,
 ) *Handler {
 	return &Handler{
 		orchestrator: orchestrator,
@@ -48,302 +46,257 @@ func NewHandler(
 	}
 }
 
-// Register wires all routes onto the given engine.
-func (h *Handler) Register(r *gin.Engine) {
-	// Observability
-	r.GET("/health", h.Health)
-	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+// Register wires all routes on the given mux.
+func (h *Handler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /health", h.Health)
+	mux.HandleFunc("GET /metrics", h.Metrics)
 
-	v1 := r.Group("/api/v1")
-	{
-		// Agent tasks
-		v1.POST("/agent/run", h.RunTask)
-		v1.POST("/agent/run/sync", h.RunTaskSync)
-		v1.GET("/agent/tasks", h.ListTasks)
-		v1.GET("/agent/tasks/:id", h.GetTask)
-		v1.DELETE("/agent/tasks/:id", h.CancelTask)
+	mux.HandleFunc("POST /api/v1/agent/run", h.RunTask)
+	mux.HandleFunc("POST /api/v1/agent/run/sync", h.RunTaskSync)
+	mux.HandleFunc("GET /api/v1/agent/tasks", h.ListTasks)
+	mux.HandleFunc("GET /api/v1/agent/tasks/{id}", h.GetTask)
+	mux.HandleFunc("DELETE /api/v1/agent/tasks/{id}", h.CancelTask)
 
-		// NLP endpoints
-		v1.POST("/nlp/process", h.ProcessText)
-		v1.POST("/nlp/classify", h.ClassifyIntent)
-		v1.POST("/nlp/entities", h.ExtractEntities)
-		v1.POST("/nlp/keywords", h.ExtractKeywords)
+	mux.HandleFunc("POST /api/v1/nlp/process", h.ProcessText)
+	mux.HandleFunc("POST /api/v1/nlp/classify", h.ClassifyIntent)
+	mux.HandleFunc("POST /api/v1/nlp/entities", h.ExtractEntities)
+	mux.HandleFunc("POST /api/v1/nlp/keywords", h.ExtractKeywords)
 
-		// Tools registry
-		v1.GET("/tools", h.ListTools)
-	}
+	mux.HandleFunc("GET /api/v1/tools", h.ListTools)
 }
 
-// --- Request/Response types ---
+// --- Helpers ---
 
-type RunTaskRequest struct {
-	Prompt    string            `json:"prompt" binding:"required"`
-	SessionID string            `json:"session_id"`
-	Context   map[string]string `json:"context"`
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
-type RunTaskResponse struct {
-	TaskID    string    `json:"task_id"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+func readJSON(r *http.Request, v any) error {
+	defer r.Body.Close()
+	return json.NewDecoder(r.Body).Decode(v)
 }
 
-type TaskResponse struct {
-	TaskID     string                 `json:"task_id"`
-	Status     string                 `json:"status"`
-	Response   string                 `json:"response,omitempty"`
-	ToolCalls  []agent.ToolCallRecord `json:"tool_calls,omitempty"`
-	TokensUsed int                    `json:"tokens_used,omitempty"`
-	DurationMs int64                  `json:"duration_ms,omitempty"`
-	Error      string                 `json:"error,omitempty"`
-}
-
-type ProcessTextRequest struct {
-	Text string `json:"text" binding:"required"`
-}
-
-type ClassifyRequest struct {
-	Text   string   `json:"text" binding:"required"`
-	Labels []string `json:"labels" binding:"required"`
-}
-
-type ExtractEntitiesRequest struct {
-	Text string `json:"text" binding:"required"`
-}
-
-type KeywordsRequest struct {
-	Text string `json:"text" binding:"required"`
-	TopN int    `json:"top_n"`
+func errJSON(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
 }
 
 // --- Handlers ---
 
-func (h *Handler) Health(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
+func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
 		"service": "go-llm-agent-framework",
 		"time":    time.Now().UTC(),
 	})
 }
 
-// RunTask submits a task asynchronously and returns the task ID.
-func (h *Handler) RunTask(c *gin.Context) {
-	var req RunTaskRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+func (h *Handler) Metrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	metrics.WriteMetrics(w)
+}
+
+func (h *Handler) RunTask(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Prompt    string            `json:"prompt"`
+		SessionID string            `json:"session_id"`
+		Context   map[string]string `json:"context"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Prompt == "" {
+		errJSON(w, http.StatusBadRequest, "prompt is required")
 		return
 	}
-
-	taskID, err := h.orchestrator.Submit(c.Request.Context(), req.Prompt, req.SessionID, req.Context)
+	taskID, err := h.orchestrator.Submit(r.Context(), req.Prompt, req.SessionID, req.Context)
 	if err != nil {
-		h.logger.Error("submit task failed", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to submit task"})
+		h.logger.Error("submit task failed", "error", err)
+		errJSON(w, http.StatusInternalServerError, "failed to submit task")
 		return
 	}
-
-	c.JSON(http.StatusAccepted, RunTaskResponse{
-		TaskID:    taskID,
-		Status:    string(agent.StatusPending),
-		CreatedAt: time.Now().UTC(),
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"task_id": taskID, "status": "pending", "created_at": time.Now().UTC(),
 	})
 }
 
-// RunTaskSync submits a task and waits for the result (blocking).
-func (h *Handler) RunTaskSync(c *gin.Context) {
-	var req RunTaskRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+func (h *Handler) RunTaskSync(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Prompt    string            `json:"prompt"`
+		SessionID string            `json:"session_id"`
+		Context   map[string]string `json:"context"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Prompt == "" {
+		errJSON(w, http.StatusBadRequest, "prompt is required")
 		return
 	}
-
-	result, err := h.orchestrator.SubmitAndWait(c.Request.Context(), req.Prompt, req.SessionID, req.Context)
+	result, err := h.orchestrator.SubmitAndWait(r.Context(), req.Prompt, req.SessionID, req.Context)
 	if err != nil {
-		h.logger.Error("sync task failed", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	c.JSON(http.StatusOK, toTaskResponse(result))
+	writeJSON(w, http.StatusOK, taskResultJSON(result))
 }
 
-// GetTask returns the status and result of a task.
-func (h *Handler) GetTask(c *gin.Context) {
-	id := c.Param("id")
+func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	status, result, err := h.orchestrator.Status(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		errJSON(w, http.StatusNotFound, err.Error())
 		return
 	}
-
 	if result != nil {
-		c.JSON(http.StatusOK, toTaskResponse(result))
+		writeJSON(w, http.StatusOK, taskResultJSON(result))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"task_id": id, "status": string(status)})
+	writeJSON(w, http.StatusOK, map[string]string{"task_id": id, "status": string(status)})
 }
 
-// ListTasks returns all tracked tasks.
-func (h *Handler) ListTasks(c *gin.Context) {
+func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	results := h.orchestrator.ListTasks()
-	c.JSON(http.StatusOK, gin.H{
-		"tasks": results,
-		"count": len(results),
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"tasks": results, "count": len(results)})
 }
 
-// CancelTask cancels a running task.
-func (h *Handler) CancelTask(c *gin.Context) {
-	id := c.Param("id")
+func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
 	if err := h.orchestrator.Cancel(id); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		errJSON(w, http.StatusNotFound, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"task_id": id, "status": "cancellation_requested"})
+	writeJSON(w, http.StatusOK, map[string]string{"task_id": id, "status": "cancellation_requested"})
 }
 
-// ProcessText runs the NLP preprocessing pipeline.
-func (h *Handler) ProcessText(c *gin.Context) {
-	var req ProcessTextRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+func (h *Handler) ProcessText(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Text == "" {
+		errJSON(w, http.StatusBadRequest, "text is required")
 		return
 	}
-	result := h.preprocessor.Process(req.Text)
-	c.JSON(http.StatusOK, gin.H{
-		"original":    result.Original,
-		"normalized":  result.Normalized,
-		"word_count":  result.WordCount,
-		"char_count":  result.CharCount,
-		"language":    result.Language,
-		"sentences":   result.Sentences,
-		"token_count": len(result.Tokens),
+	res := h.preprocessor.Process(req.Text)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"original": res.Original, "normalized": res.Normalized,
+		"word_count": res.WordCount, "char_count": res.CharCount,
+		"language": res.Language, "sentences": res.Sentences,
+		"token_count": len(res.Tokens),
 	})
 }
 
-// ClassifyIntent classifies text into provided labels.
-func (h *Handler) ClassifyIntent(c *gin.Context) {
-	var req ClassifyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+func (h *Handler) ClassifyIntent(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text   string   `json:"text"`
+		Labels []string `json:"labels"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Text == "" || len(req.Labels) == 0 {
+		errJSON(w, http.StatusBadRequest, "text and labels are required")
 		return
 	}
-	result, err := h.classifier.Classify(c.Request.Context(), req.Text, req.Labels)
+	res, err := h.classifier.Classify(r.Context(), req.Text, req.Labels)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"intent":     result.Intent,
-		"confidence": result.Confidence,
-		"all_scores": result.AllScores,
+	writeJSON(w, http.StatusOK, map[string]any{
+		"intent": res.Intent, "confidence": res.Confidence, "all_scores": res.AllScores,
 	})
 }
 
-// ExtractEntities extracts named entities from text.
-func (h *Handler) ExtractEntities(c *gin.Context) {
-	var req ExtractEntitiesRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+func (h *Handler) ExtractEntities(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Text == "" {
+		errJSON(w, http.StatusBadRequest, "text is required")
 		return
 	}
-	entities, err := h.extractor.Extract(c.Request.Context(), req.Text)
+	entities, err := h.extractor.Extract(r.Context(), req.Text)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"entities": entities,
-		"count":    len(entities),
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"entities": entities, "count": len(entities)})
 }
 
-// ExtractKeywords returns the top N keywords from text.
-func (h *Handler) ExtractKeywords(c *gin.Context) {
-	var req KeywordsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+func (h *Handler) ExtractKeywords(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text string `json:"text"`
+		TopN int    `json:"top_n"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Text == "" {
+		errJSON(w, http.StatusBadRequest, "text is required")
 		return
 	}
 	if req.TopN <= 0 {
 		req.TopN = 10
 	}
-	keywords := h.preprocessor.Keywords(req.Text, req.TopN)
-	c.JSON(http.StatusOK, gin.H{"keywords": keywords})
+	writeJSON(w, http.StatusOK, map[string]any{"keywords": h.preprocessor.Keywords(req.Text, req.TopN)})
 }
 
-// ListTools returns all registered tools with their schemas.
-func (h *Handler) ListTools(c *gin.Context) {
+func (h *Handler) ListTools(w http.ResponseWriter, r *http.Request) {
 	schemas := h.toolReg.ToolSchemas()
-	c.JSON(http.StatusOK, gin.H{
-		"tools": schemas,
-		"count": len(schemas),
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"tools": schemas, "count": len(schemas)})
 }
 
 // --- Middleware ---
 
-// MetricsMiddleware records HTTP metrics.
-func MetricsMiddleware(m *metrics.HTTPMetrics) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func MetricsMiddleware(m *metrics.HTTPMetrics, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		m.ActiveRequests.Inc()
 		defer m.ActiveRequests.Dec()
-
-		c.Next()
-
-		duration := time.Since(start)
-		status := strconv.Itoa(c.Writer.Status())
-		path := c.FullPath()
-		if path == "" {
-			path = "unknown"
-		}
-
-		m.RequestsTotal.WithLabelValues(c.Request.Method, path, status).Inc()
-		m.RequestDuration.WithLabelValues(c.Request.Method, path).Observe(duration.Seconds())
-	}
+		rw := &responseWriter{ResponseWriter: w, status: 200}
+		next.ServeHTTP(rw, r)
+		dur := time.Since(start)
+		m.RequestsTotal.With(r.Method, r.URL.Path, strconv.Itoa(rw.status)).Inc()
+		m.RequestDuration.With(r.Method, r.URL.Path).Observe(dur.Seconds())
+	})
 }
 
-// RequestIDMiddleware injects a unique request ID.
-func RequestIDMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id := c.GetHeader("X-Request-ID")
+func RequestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("X-Request-ID")
 		if id == "" {
-			// Generate a short ID from time
 			id = strconv.FormatInt(time.Now().UnixNano(), 36)
 		}
-		c.Set("request_id", id)
-		c.Header("X-Request-ID", id)
-		c.Next()
-	}
+		w.Header().Set("X-Request-ID", id)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyRequestID{}, id)))
+	})
 }
 
-// ZapLogger returns a Gin middleware that logs requests with zap.
-func ZapLogger(logger *zap.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
+type ctxKeyRequestID struct{}
+
+func SlogLogger(logger *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		c.Next()
-		logger.Info("http request",
-			zap.String("method", c.Request.Method),
-			zap.String("path", c.Request.URL.Path),
-			zap.Int("status", c.Writer.Status()),
-			zap.Duration("duration", time.Since(start)),
-			zap.String("ip", c.ClientIP()),
-			zap.String("request_id", c.GetString("request_id")),
+		rw := &responseWriter{ResponseWriter: w, status: 200}
+		next.ServeHTTP(rw, r)
+		logger.Info("http",
+			"method", r.Method, "path", r.URL.Path,
+			"status", rw.status, "duration_ms", time.Since(start).Milliseconds(),
+			"ip", strings.Split(r.RemoteAddr, ":")[0],
 		)
-	}
+	})
 }
 
-// --- Helpers ---
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+}
 
-func toTaskResponse(r *agent.TaskResult) TaskResponse {
-	resp := TaskResponse{
-		TaskID:     r.TaskID,
-		Status:     string(r.Status),
-		Response:   r.Response,
-		ToolCalls:  r.ToolCalls,
-		TokensUsed: r.TokensUsed,
-		DurationMs: r.Duration.Milliseconds(),
-		Error:      r.Error,
+func (rw *responseWriter) WriteHeader(s int) {
+	rw.status = s
+	rw.ResponseWriter.WriteHeader(s)
+}
+
+// --- Response helpers ---
+
+func taskResultJSON(r *agent.TaskResult) map[string]any {
+	return map[string]any{
+		"task_id":     r.TaskID,
+		"status":      string(r.Status),
+		"response":    r.Response,
+		"tool_calls":  r.ToolCalls,
+		"tokens_used": r.TokensUsed,
+		"duration_ms": r.Duration.Milliseconds(),
+		"error":       r.Error,
 	}
-	return resp
 }

@@ -8,16 +8,14 @@ import (
 	"github.com/DennisMRitchie/go-llm-agent-framework/internal/nlp"
 )
 
-// MemoryEntry is a single turn in the conversation.
 type MemoryEntry struct {
-	Role      string // "user" | "assistant" | "system"
+	Role      string
 	Content   string
 	Timestamp time.Time
 	Metadata  map[string]any
-	embedding []float64 // lazy-computed
+	embedding []float64
 }
 
-// Memory manages conversation history for an agent session.
 type Memory struct {
 	mu           sync.RWMutex
 	entries      []*MemoryEntry
@@ -26,27 +24,16 @@ type Memory struct {
 }
 
 func NewMemory(maxEntries int, preprocessor *nlp.Preprocessor) *Memory {
-	return &Memory{
-		maxEntries:   maxEntries,
-		preprocessor: preprocessor,
-	}
+	return &Memory{maxEntries: maxEntries, preprocessor: preprocessor}
 }
 
-// Add appends a new entry, evicting the oldest non-system message if at capacity.
 func (m *Memory) Add(role, content string, metadata map[string]any) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	entry := &MemoryEntry{
-		Role:      role,
-		Content:   content,
-		Timestamp: time.Now(),
-		Metadata:  metadata,
-	}
-
-	m.entries = append(m.entries, entry)
-
-	// Evict oldest non-system entries when over limit
+	m.entries = append(m.entries, &MemoryEntry{
+		Role: role, Content: content,
+		Timestamp: time.Now(), Metadata: metadata,
+	})
 	for len(m.entries) > m.maxEntries {
 		for i, e := range m.entries {
 			if e.Role != "system" {
@@ -54,48 +41,36 @@ func (m *Memory) Add(role, content string, metadata map[string]any) {
 				break
 			}
 		}
-		// Failsafe: if all are system, evict oldest
 		if len(m.entries) > m.maxEntries {
 			m.entries = m.entries[1:]
 		}
 	}
 }
 
-// AddSystem inserts a system message at the front (persists across eviction).
 func (m *Memory) AddSystem(content string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.entries = append([]*MemoryEntry{{
-		Role:      "system",
-		Content:   content,
-		Timestamp: time.Now(),
+		Role: "system", Content: content, Timestamp: time.Now(),
 	}}, m.entries...)
 }
 
-// Messages returns the full history as LLM client messages.
 func (m *Memory) Messages() []llmclient.Message {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]llmclient.Message, len(m.entries))
 	for i, e := range m.entries {
-		out[i] = llmclient.Message{
-			Role:      e.Role,
-			Content:   e.Content,
-			Timestamp: e.Timestamp.UnixMilli(),
-		}
+		out[i] = llmclient.Message{Role: e.Role, Content: e.Content, Timestamp: e.Timestamp.UnixMilli()}
 	}
 	return out
 }
 
-// Search returns the top-K most semantically similar memories to the query.
 func (m *Memory) Search(query string, topK int) []*MemoryEntry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	if len(m.entries) == 0 {
 		return nil
 	}
-
 	pt := m.preprocessor.Process(query)
 	qVec := m.preprocessor.Embedding(pt.Tokens)
 
@@ -104,17 +79,13 @@ func (m *Memory) Search(query string, topK int) []*MemoryEntry {
 		score float64
 	}
 	results := make([]scored, 0, len(m.entries))
-
 	for _, e := range m.entries {
 		if e.embedding == nil {
 			ept := m.preprocessor.Process(e.Content)
 			e.embedding = m.preprocessor.Embedding(ept.Tokens)
 		}
-		sim := nlp.CosineSimilarity(qVec, e.embedding)
-		results = append(results, scored{e, sim})
+		results = append(results, scored{e, nlp.CosineSimilarity(qVec, e.embedding)})
 	}
-
-	// Partial sort: find top K
 	for i := 0; i < len(results) && i < topK; i++ {
 		maxIdx := i
 		for j := i + 1; j < len(results); j++ {
@@ -124,7 +95,6 @@ func (m *Memory) Search(query string, topK int) []*MemoryEntry {
 		}
 		results[i], results[maxIdx] = results[maxIdx], results[i]
 	}
-
 	if topK > len(results) {
 		topK = len(results)
 	}
@@ -135,21 +105,18 @@ func (m *Memory) Search(query string, topK int) []*MemoryEntry {
 	return out
 }
 
-// Clear wipes all memory entries.
 func (m *Memory) Clear() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.entries = nil
 }
 
-// Len returns the number of stored entries.
 func (m *Memory) Len() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.entries)
 }
 
-// Last returns the most recent N entries in chronological order.
 func (m *Memory) Last(n int) []*MemoryEntry {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

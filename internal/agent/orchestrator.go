@@ -3,11 +3,11 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"go.uber.org/zap"
 
 	"github.com/DennisMRitchie/go-llm-agent-framework/internal/config"
 	"github.com/DennisMRitchie/go-llm-agent-framework/internal/llmclient"
@@ -16,7 +16,6 @@ import (
 	"github.com/DennisMRitchie/go-llm-agent-framework/internal/tools"
 )
 
-// taskEntry tracks an in-flight or completed task.
 type taskEntry struct {
 	task   *Task
 	result *TaskResult
@@ -25,7 +24,6 @@ type taskEntry struct {
 	done   chan struct{}
 }
 
-// Orchestrator manages a pool of concurrent agent runs.
 type Orchestrator struct {
 	cfg          config.AgentConfig
 	llmClient    llmclient.Client
@@ -34,15 +32,12 @@ type Orchestrator struct {
 	classifier   *nlp.Classifier
 	extractor    *nlp.EntityExtractor
 	m            *metrics.AgentMetrics
-	logger       *zap.Logger
-
-	mu    sync.RWMutex
-	tasks map[string]*taskEntry
-	// semaphore for max concurrent runs
-	runSem chan struct{}
+	logger       *slog.Logger
+	mu           sync.RWMutex
+	tasks        map[string]*taskEntry
+	runSem       chan struct{}
 }
 
-// NewOrchestrator constructs an Orchestrator.
 func NewOrchestrator(
 	cfg config.AgentConfig,
 	llmClient llmclient.Client,
@@ -51,7 +46,7 @@ func NewOrchestrator(
 	classifier *nlp.Classifier,
 	extractor *nlp.EntityExtractor,
 	m *metrics.AgentMetrics,
-	logger *zap.Logger,
+	logger *slog.Logger,
 ) *Orchestrator {
 	return &Orchestrator{
 		cfg:          cfg,
@@ -67,38 +62,23 @@ func NewOrchestrator(
 	}
 }
 
-// Submit enqueues a task for asynchronous execution. Returns the task ID.
 func (o *Orchestrator) Submit(ctx context.Context, prompt, sessionID string, context_ map[string]string) (string, error) {
 	taskID := uuid.NewString()
-	task := &Task{
-		ID:        taskID,
-		Prompt:    prompt,
-		SessionID: sessionID,
-		Context:   context_,
-		CreatedAt: time.Now(),
-	}
+	task := &Task{ID: taskID, Prompt: prompt, SessionID: sessionID, Context: context_, CreatedAt: time.Now()}
 
 	taskCtx, cancel := context.WithCancel(ctx)
-	entry := &taskEntry{
-		task:   task,
-		status: StatusPending,
-		cancel: cancel,
-		done:   make(chan struct{}),
-	}
+	entry := &taskEntry{task: task, status: StatusPending, cancel: cancel, done: make(chan struct{})}
 
 	o.mu.Lock()
 	o.tasks[taskID] = entry
 	o.mu.Unlock()
 
 	o.m.QueueDepth.Inc()
-
 	go o.runTask(taskCtx, entry)
-
-	o.logger.Info("task submitted", zap.String("task_id", taskID), zap.String("session_id", sessionID))
+	o.logger.Info("task submitted", "task_id", taskID)
 	return taskID, nil
 }
 
-// SubmitAndWait submits a task and blocks until it completes. Returns the result directly.
 func (o *Orchestrator) SubmitAndWait(ctx context.Context, prompt, sessionID string, context_ map[string]string) (*TaskResult, error) {
 	taskID, err := o.Submit(ctx, prompt, sessionID, context_)
 	if err != nil {
@@ -107,7 +87,6 @@ func (o *Orchestrator) SubmitAndWait(ctx context.Context, prompt, sessionID stri
 	return o.Wait(ctx, taskID)
 }
 
-// Wait blocks until the task with the given ID completes or ctx is cancelled.
 func (o *Orchestrator) Wait(ctx context.Context, taskID string) (*TaskResult, error) {
 	o.mu.RLock()
 	entry, ok := o.tasks[taskID]
@@ -115,7 +94,6 @@ func (o *Orchestrator) Wait(ctx context.Context, taskID string) (*TaskResult, er
 	if !ok {
 		return nil, fmt.Errorf("task %s not found", taskID)
 	}
-
 	select {
 	case <-entry.done:
 		return entry.result, nil
@@ -124,7 +102,6 @@ func (o *Orchestrator) Wait(ctx context.Context, taskID string) (*TaskResult, er
 	}
 }
 
-// Status returns the current status of a task.
 func (o *Orchestrator) Status(taskID string) (TaskStatus, *TaskResult, error) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
@@ -135,7 +112,6 @@ func (o *Orchestrator) Status(taskID string) (TaskStatus, *TaskResult, error) {
 	return entry.status, entry.result, nil
 }
 
-// Cancel cancels a running task.
 func (o *Orchestrator) Cancel(taskID string) error {
 	o.mu.RLock()
 	entry, ok := o.tasks[taskID]
@@ -147,7 +123,6 @@ func (o *Orchestrator) Cancel(taskID string) error {
 	return nil
 }
 
-// ListTasks returns a snapshot of all tracked tasks.
 func (o *Orchestrator) ListTasks() []*TaskResult {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
@@ -156,21 +131,16 @@ func (o *Orchestrator) ListTasks() []*TaskResult {
 		if e.result != nil {
 			results = append(results, e.result)
 		} else {
-			results = append(results, &TaskResult{
-				TaskID: e.task.ID,
-				Status: e.status,
-			})
+			results = append(results, &TaskResult{TaskID: e.task.ID, Status: e.status})
 		}
 	}
 	return results
 }
 
-// Cleanup removes completed tasks older than maxAge.
 func (o *Orchestrator) Cleanup(maxAge time.Duration) int {
 	cutoff := time.Now().Add(-maxAge)
 	o.mu.Lock()
 	defer o.mu.Unlock()
-
 	removed := 0
 	for id, e := range o.tasks {
 		if (e.status == StatusCompleted || e.status == StatusFailed || e.status == StatusCancelled) &&
@@ -183,18 +153,13 @@ func (o *Orchestrator) Cleanup(maxAge time.Duration) int {
 }
 
 func (o *Orchestrator) runTask(ctx context.Context, entry *taskEntry) {
-	// Acquire concurrency slot
 	select {
 	case o.runSem <- struct{}{}:
 		defer func() { <-o.runSem }()
 	case <-ctx.Done():
 		o.mu.Lock()
 		entry.status = StatusCancelled
-		entry.result = &TaskResult{
-			TaskID: entry.task.ID,
-			Status: StatusCancelled,
-			Error:  "cancelled before start",
-		}
+		entry.result = &TaskResult{TaskID: entry.task.ID, Status: StatusCancelled, Error: "cancelled before start"}
 		o.mu.Unlock()
 		close(entry.done)
 		o.m.QueueDepth.Dec()
@@ -206,37 +171,17 @@ func (o *Orchestrator) runTask(ctx context.Context, entry *taskEntry) {
 	o.mu.Unlock()
 	o.m.QueueDepth.Dec()
 
-	// Build per-task agent
-	agent := New(
-		o.cfg,
-		o.llmClient,
-		o.toolReg,
-		o.preprocessor,
-		o.classifier,
-		o.extractor,
-		o.m,
-		o.logger,
-	)
-
-	result, err := agent.Run(ctx, entry.task)
+	a := New(o.cfg, o.llmClient, o.toolReg, o.preprocessor, o.classifier, o.extractor, o.m, o.logger)
+	result, err := a.Run(ctx, entry.task)
 	if err != nil {
-		result = &TaskResult{
-			TaskID: entry.task.ID,
-			Status: StatusFailed,
-			Error:  err.Error(),
-		}
+		result = &TaskResult{TaskID: entry.task.ID, Status: StatusFailed, Error: err.Error()}
 	}
 
 	o.mu.Lock()
 	entry.result = result
 	entry.status = result.Status
 	o.mu.Unlock()
-
 	close(entry.done)
 
-	o.logger.Info("task finished",
-		zap.String("task_id", entry.task.ID),
-		zap.String("status", string(result.Status)),
-		zap.Duration("duration", result.Duration),
-	)
+	o.logger.Info("task finished", "task_id", entry.task.ID, "status", result.Status, "duration_ms", result.Duration.Milliseconds())
 }
