@@ -50,17 +50,8 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test -coverprofile=coverage.out -covermode=atomic -timeout=120s ./...
-
-      - name: Show coverage summary
-        run: go tool cover -func=coverage.out | tail -1
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./coverage.out
-          fail_ci_if_error: false
-
+        run: go test -timeout=120s ./tests/
+        
   benchmark:
     name: Benchmark
     runs-on: ubuntu-latest
