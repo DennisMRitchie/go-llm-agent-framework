@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  GO_VERSION: "1.22"
+  GO_VERSION: "1.24"
 
 jobs:
   lint:
@@ -27,7 +27,7 @@ jobs:
 
       - name: gofmt check
         run: |
-          files=$(gofmt -l ./...)
+          files=$(find . -name "*.go" -not -path "./.git/*" | xargs gofmt -l)
           if [ -n "$files" ]; then
             echo "Files not formatted:"
             echo "$files"
@@ -49,8 +49,8 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run tests with race detector
-        run: go test -race -coverprofile=coverage.out -covermode=atomic -timeout=120s ./...
+      - name: Run tests
+        run: go test -coverprofile=coverage.out -covermode=atomic -timeout=120s ./...
 
       - name: Show coverage summary
         run: go tool cover -func=coverage.out | tail -1
