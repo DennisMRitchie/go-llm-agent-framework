@@ -22,10 +22,10 @@ type ToolInput struct {
 
 // ToolOutput is what a tool returns.
 type ToolOutput struct {
-	Content   string        `json:"content"`
-	IsError   bool          `json:"is_error,omitempty"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
-	Duration  time.Duration `json:"duration_ms,omitempty"`
+	Content  string         `json:"content"`
+	IsError  bool           `json:"is_error,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+	Duration time.Duration  `json:"duration_ms,omitempty"`
 }
 
 func (o *ToolOutput) String() string {
@@ -107,7 +107,7 @@ func (r *Registry) ToolSchemas() []map[string]any {
 
 type CalculatorTool struct{}
 
-func (c *CalculatorTool) Name()        string { return "calculator" }
+func (c *CalculatorTool) Name() string { return "calculator" }
 func (c *CalculatorTool) Description() string {
 	return "Performs basic arithmetic: add, subtract, multiply, divide, power, sqrt."
 }
@@ -173,7 +173,7 @@ func (c *CalculatorTool) Execute(_ context.Context, input ToolInput) (*ToolOutpu
 
 type TextSummarizerTool struct{}
 
-func (t *TextSummarizerTool) Name()        string { return "text_summarizer" }
+func (t *TextSummarizerTool) Name() string { return "text_summarizer" }
 func (t *TextSummarizerTool) Description() string {
 	return "Extracts the first N sentences from text as a simple summary."
 }
@@ -181,7 +181,7 @@ func (t *TextSummarizerTool) Schema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"text":     map[string]any{"type": "string"},
+			"text":      map[string]any{"type": "string"},
 			"max_sents": map[string]any{"type": "integer", "default": 3},
 		},
 		"required": []string{"text"},
@@ -239,7 +239,7 @@ func splitSentences(text string) []string {
 
 type DateTimeTool struct{}
 
-func (d *DateTimeTool) Name()        string { return "datetime" }
+func (d *DateTimeTool) Name() string { return "datetime" }
 func (d *DateTimeTool) Description() string {
 	return "Returns the current date and time in the requested timezone and format."
 }
@@ -280,7 +280,7 @@ func (d *DateTimeTool) Execute(_ context.Context, input ToolInput) (*ToolOutput,
 	}
 
 	return &ToolOutput{
-		Content: result,
+		Content:  result,
 		Metadata: map[string]any{"timezone": tz, "unix": now.Unix()},
 	}, nil
 }
@@ -289,7 +289,7 @@ func (d *DateTimeTool) Execute(_ context.Context, input ToolInput) (*ToolOutput,
 
 type JSONParseTool struct{}
 
-func (j *JSONParseTool) Name()        string { return "json_parse" }
+func (j *JSONParseTool) Name() string { return "json_parse" }
 func (j *JSONParseTool) Description() string {
 	return "Parses a JSON string and returns a field value by dot-notation path."
 }
@@ -343,8 +343,10 @@ func (j *JSONParseTool) Execute(_ context.Context, input ToolInput) (*ToolOutput
 
 type EchoTool struct{}
 
-func (e *EchoTool) Name()        string { return "echo" }
-func (e *EchoTool) Description() string { return "Returns the input message unchanged. Useful for testing." }
+func (e *EchoTool) Name() string { return "echo" }
+func (e *EchoTool) Description() string {
+	return "Returns the input message unchanged. Useful for testing."
+}
 func (e *EchoTool) Schema() map[string]any {
 	return map[string]any{
 		"type":       "object",

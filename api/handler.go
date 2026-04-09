@@ -89,13 +89,13 @@ type RunTaskResponse struct {
 }
 
 type TaskResponse struct {
-	TaskID     string                   `json:"task_id"`
-	Status     string                   `json:"status"`
-	Response   string                   `json:"response,omitempty"`
-	ToolCalls  []agent.ToolCallRecord   `json:"tool_calls,omitempty"`
-	TokensUsed int                      `json:"tokens_used,omitempty"`
-	DurationMs int64                    `json:"duration_ms,omitempty"`
-	Error      string                   `json:"error,omitempty"`
+	TaskID     string                 `json:"task_id"`
+	Status     string                 `json:"status"`
+	Response   string                 `json:"response,omitempty"`
+	ToolCalls  []agent.ToolCallRecord `json:"tool_calls,omitempty"`
+	TokensUsed int                    `json:"tokens_used,omitempty"`
+	DurationMs int64                  `json:"duration_ms,omitempty"`
+	Error      string                 `json:"error,omitempty"`
 }
 
 type ProcessTextRequest struct {
@@ -112,8 +112,8 @@ type ExtractEntitiesRequest struct {
 }
 
 type KeywordsRequest struct {
-	Text  string `json:"text" binding:"required"`
-	TopN  int    `json:"top_n"`
+	Text string `json:"text" binding:"required"`
+	TopN int    `json:"top_n"`
 }
 
 // --- Handlers ---
@@ -210,12 +210,12 @@ func (h *Handler) ProcessText(c *gin.Context) {
 	}
 	result := h.preprocessor.Process(req.Text)
 	c.JSON(http.StatusOK, gin.H{
-		"original":   result.Original,
-		"normalized": result.Normalized,
-		"word_count": result.WordCount,
-		"char_count": result.CharCount,
-		"language":   result.Language,
-		"sentences":  result.Sentences,
+		"original":    result.Original,
+		"normalized":  result.Normalized,
+		"word_count":  result.WordCount,
+		"char_count":  result.CharCount,
+		"language":    result.Language,
+		"sentences":   result.Sentences,
 		"token_count": len(result.Tokens),
 	})
 }

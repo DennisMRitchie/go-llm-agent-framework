@@ -27,19 +27,19 @@ type taskEntry struct {
 
 // Orchestrator manages a pool of concurrent agent runs.
 type Orchestrator struct {
-	cfg         config.AgentConfig
-	llmClient   llmclient.Client
-	toolReg     *tools.Registry
+	cfg          config.AgentConfig
+	llmClient    llmclient.Client
+	toolReg      *tools.Registry
 	preprocessor *nlp.Preprocessor
-	classifier  *nlp.Classifier
-	extractor   *nlp.EntityExtractor
-	m           *metrics.AgentMetrics
-	logger      *zap.Logger
+	classifier   *nlp.Classifier
+	extractor    *nlp.EntityExtractor
+	m            *metrics.AgentMetrics
+	logger       *zap.Logger
 
-	mu      sync.RWMutex
-	tasks   map[string]*taskEntry
+	mu    sync.RWMutex
+	tasks map[string]*taskEntry
 	// semaphore for max concurrent runs
-	runSem  chan struct{}
+	runSem chan struct{}
 }
 
 // NewOrchestrator constructs an Orchestrator.

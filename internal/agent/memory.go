@@ -10,7 +10,7 @@ import (
 
 // MemoryEntry is a single turn in the conversation.
 type MemoryEntry struct {
-	Role      string    // "user" | "assistant" | "system"
+	Role      string // "user" | "assistant" | "system"
 	Content   string
 	Timestamp time.Time
 	Metadata  map[string]any
@@ -19,9 +19,9 @@ type MemoryEntry struct {
 
 // Memory manages conversation history for an agent session.
 type Memory struct {
-	mu          sync.RWMutex
-	entries     []*MemoryEntry
-	maxEntries  int
+	mu           sync.RWMutex
+	entries      []*MemoryEntry
+	maxEntries   int
 	preprocessor *nlp.Preprocessor
 }
 

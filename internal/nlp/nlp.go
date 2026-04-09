@@ -50,9 +50,9 @@ var stopwords = map[string]bool{
 }
 
 var (
-	rePunct    = regexp.MustCompile(`[^\w\s]`)
-	reMultiSp  = regexp.MustCompile(`\s+`)
-	reSentEnd  = regexp.MustCompile(`[.!?]+\s+`)
+	rePunct   = regexp.MustCompile(`[^\w\s]`)
+	reMultiSp = regexp.MustCompile(`\s+`)
+	reSentEnd = regexp.MustCompile(`[.!?]+\s+`)
 )
 
 // Preprocessor runs the NLP pipeline.
@@ -247,10 +247,10 @@ func (e *EntityExtractor) Extract(ctx context.Context, text string) ([]llmclient
 }
 
 var (
-	reEmail   = regexp.MustCompile(`\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b`)
-	reURL     = regexp.MustCompile(`https?://[^\s]+`)
-	rePhone   = regexp.MustCompile(`\b(\+?[0-9]{1,3}[-.\s]?)?(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})\b`)
-	reNumber  = regexp.MustCompile(`\b\d+(\.\d+)?\b`)
+	reEmail  = regexp.MustCompile(`\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b`)
+	reURL    = regexp.MustCompile(`https?://[^\s]+`)
+	rePhone  = regexp.MustCompile(`\b(\+?[0-9]{1,3}[-.\s]?)?(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})\b`)
+	reNumber = regexp.MustCompile(`\b\d+(\.\d+)?\b`)
 )
 
 func (e *EntityExtractor) regexExtract(text string) []llmclient.Entity {
